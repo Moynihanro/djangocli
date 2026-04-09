@@ -8,7 +8,38 @@ BOLD='\033[1m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+BLUE='\033[0;34m'
+DIM='\033[2m'
 NC='\033[0m' # No Color
+
+# Always work from the script's directory
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Helper: print a step header
+step() { echo -e "\n${BOLD}${BLUE}[$1]${NC} ${BOLD}$2${NC}"; }
+
+# Helper: print success
+ok() { echo -e "  ${GREEN}✓${NC} $1"; }
+
+# Helper: print warning
+warn() { echo -e "  ${YELLOW}!${NC} $1"; }
+
+# Helper: print error and exit
+fail() { echo -e "  ${RED}✗ $1${NC}"; exit 1; }
+
+# Helper: prompt with validation (non-empty required)
+require_input() {
+    local prompt="$1"
+    local var=""
+    while [ -z "$var" ]; do
+        read -p "  $prompt" var
+        if [ -z "$var" ]; then
+            echo -e "  ${RED}This field is required.${NC}"
+        fi
+    done
+    echo "$var"
+}
 
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════╗${NC}"
@@ -17,83 +48,126 @@ echo -e "${BOLD}║   Personal AI Assistant over iMessage     ║${NC}"
 echo -e "${BOLD}╚══════════════════════════════════════════╝${NC}"
 echo ""
 
-# Check prerequisites
-echo -e "${BOLD}Checking prerequisites...${NC}"
+# ============================================================
+# Prerequisites
+# ============================================================
+step "0/6" "Checking prerequisites"
 
 if ! command -v python3 &> /dev/null; then
-    echo -e "${RED}ERROR: python3 not found. Install Python 3.10+ first.${NC}"
-    exit 1
+    fail "python3 not found. Install Python 3.10+ first."
 fi
-echo -e "  ${GREEN}✓${NC} Python3 found: $(python3 --version)"
+ok "Python3 found: $(python3 --version 2>&1)"
+
+PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+PYTHON_MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
+PYTHON_MINOR=$(echo "$PYTHON_VERSION" | cut -d. -f2)
+if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 10 ]); then
+    fail "Python 3.10+ required (found $PYTHON_VERSION). Update Python first."
+fi
 
 if ! command -v swift &> /dev/null; then
-    echo -e "${RED}ERROR: swift not found. Install Xcode Command Line Tools: xcode-select --install${NC}"
-    exit 1
+    fail "swift not found. Install Xcode Command Line Tools:\n         xcode-select --install"
 fi
-echo -e "  ${GREEN}✓${NC} Swift found: $(swift --version 2>&1 | head -1)"
+ok "Swift found"
 
 if [[ "$(uname)" != "Darwin" ]]; then
-    echo -e "${RED}ERROR: DjangoCLI server requires macOS (for Calendar, Contacts, Reminders access).${NC}"
-    echo -e "       The bot can run anywhere, but the server must be on a Mac."
-    exit 1
+    fail "DjangoCLI server requires macOS (for Calendar, Contacts, Reminders access).\n         The bot can run anywhere, but the server must be on a Mac."
 fi
-echo -e "  ${GREEN}✓${NC} macOS detected"
-echo ""
+ok "macOS detected"
+
+# Check for Tailscale
+TAILSCALE_IP=""
+if command -v tailscale &> /dev/null; then
+    TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || true)
+    if [ -n "$TAILSCALE_IP" ]; then
+        ok "Tailscale connected: $TAILSCALE_IP"
+    else
+        warn "Tailscale installed but not connected. Run: tailscale up"
+    fi
+else
+    warn "Tailscale not installed. Install from: https://tailscale.com/download"
+    echo -e "  ${DIM}You'll need Tailscale for your bot to reach this Mac remotely.${NC}"
+fi
 
 # ============================================================
-# Collect Configuration
+# Step 1: Identity
 # ============================================================
-echo -e "${BOLD}Step 1: Your Identity${NC}"
-echo ""
+step "1/6" "Your Identity"
 
-read -p "  Your name: " OWNER_NAME
-read -p "  Your phone number (with country code, e.g. +15551234567): " PHONE_NUMBER
+OWNER_NAME=$(require_input "Your name: ")
+PHONE_NUMBER=$(require_input "Your phone number (with country code, e.g. +15551234567): ")
 read -p "  Your timezone [America/New_York]: " TIMEZONE
 TIMEZONE=${TIMEZONE:-America/New_York}
+
+# ============================================================
+# Step 2: API Keys
+# ============================================================
+step "2/6" "API Keys"
+
+echo ""
+echo -e "  ${DIM}Get your Anthropic API key from: https://console.anthropic.com/settings/keys${NC}"
+ANTHROPIC_KEY=$(require_input "Anthropic API key: ")
 echo ""
 
-echo -e "${BOLD}Step 2: API Keys${NC}"
+echo -e "  ${DIM}Get SendBlue keys from: https://sendblue.co/dashboard${NC}"
+SENDBLUE_KEY=$(require_input "SendBlue API key: ")
+SENDBLUE_SECRET=$(require_input "SendBlue secret key: ")
+SENDBLUE_FROM=$(require_input "SendBlue phone number (the number assigned to you by SendBlue): ")
 echo ""
 
-echo "  Get your Anthropic API key from: https://console.anthropic.com/settings/keys"
-read -p "  Anthropic API key: " ANTHROPIC_KEY
-echo ""
-
-echo "  Get SendBlue keys from: https://sendblue.co/dashboard"
-read -p "  SendBlue API key: " SENDBLUE_KEY
-read -p "  SendBlue secret key: " SENDBLUE_SECRET
-read -p "  SendBlue phone number [+13054507715]: " SENDBLUE_FROM
-SENDBLUE_FROM=${SENDBLUE_FROM:-+13054507715}
-echo ""
-
-echo "  Brave Search API (optional, for web search): https://api.search.brave.com/"
+echo -e "  ${DIM}Brave Search API (optional, for web search): https://api.search.brave.com/${NC}"
 read -p "  Brave Search API key [skip]: " BRAVE_KEY
 echo ""
 
-echo -e "${BOLD}Step 3: Server Configuration${NC}"
-echo ""
+# ============================================================
+# Step 3: Server Configuration
+# ============================================================
+step "3/6" "Server Configuration"
 
 # Generate API key
 SERVER_API_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
 echo -e "  Generated server API key: ${GREEN}${SERVER_API_KEY}${NC}"
+echo -e "  ${DIM}(Save this — you'll need it when deploying the bot to Render)${NC}"
+echo ""
 
 read -p "  Vault path (Obsidian vault) [~/Desktop/BRAIN]: " VAULT_PATH
 VAULT_PATH=${VAULT_PATH:-~/Desktop/BRAIN}
 
-read -p "  Server bind address [0.0.0.0]: " SERVER_HOST
-SERVER_HOST=${SERVER_HOST:-0.0.0.0}
+# Server bind address — default to Tailscale IP or 127.0.0.1
+if [ -n "$TAILSCALE_IP" ]; then
+    DEFAULT_HOST="$TAILSCALE_IP"
+    echo -e "  ${DIM}Defaulting to your Tailscale IP for security.${NC}"
+else
+    DEFAULT_HOST="127.0.0.1"
+    echo -e "  ${YELLOW}No Tailscale IP detected. Defaulting to localhost (127.0.0.1).${NC}"
+    echo -e "  ${DIM}Install Tailscale and re-run, or enter your Tailscale IP manually.${NC}"
+fi
+read -p "  Server bind address [$DEFAULT_HOST]: " SERVER_HOST
+SERVER_HOST=${SERVER_HOST:-$DEFAULT_HOST}
+
+if [ "$SERVER_HOST" = "0.0.0.0" ]; then
+    echo -e "  ${RED}WARNING: 0.0.0.0 exposes the server to the public internet.${NC}"
+    echo -e "  ${RED}Use your Tailscale IP instead for security.${NC}"
+    read -p "  Continue anyway? [y/N]: " CONFIRM_HOST
+    if [[ ! "$CONFIRM_HOST" =~ ^[Yy]$ ]]; then
+        read -p "  Server bind address: " SERVER_HOST
+        SERVER_HOST=${SERVER_HOST:-$DEFAULT_HOST}
+    fi
+fi
 
 read -p "  Server port [8000]: " SERVER_PORT
 SERVER_PORT=${SERVER_PORT:-8000}
 echo ""
 
-echo -e "${BOLD}Step 4: Optional Integrations${NC}"
-echo ""
+# ============================================================
+# Step 4: Optional Integrations
+# ============================================================
+step "4/6" "Optional Integrations"
 
 read -p "  Gmail address (for email access, press Enter to skip): " GMAIL_EMAIL
 GMAIL_APP_PASSWORD=""
 if [ -n "$GMAIL_EMAIL" ]; then
-    echo "  Generate an App Password at: https://myaccount.google.com/apppasswords"
+    echo -e "  ${DIM}Generate an App Password at: https://myaccount.google.com/apppasswords${NC}"
     read -p "  Gmail App Password: " GMAIL_APP_PASSWORD
 fi
 echo ""
@@ -107,14 +181,17 @@ fi
 echo ""
 read -p "  Your latitude (for weather) [40.7128]: " WEATHER_LAT
 WEATHER_LAT=${WEATHER_LAT:-40.7128}
-read -p "  Your longitude [−74.0060]: " WEATHER_LON
+read -p "  Your longitude [-74.0060]: " WEATHER_LON
 WEATHER_LON=${WEATHER_LON:--74.0060}
 read -p "  Your city name [New York]: " WEATHER_CITY
 WEATHER_CITY=${WEATHER_CITY:-New York}
 echo ""
 
-echo -e "${BOLD}Step 5: Bot Personality${NC}"
-echo ""
+# ============================================================
+# Step 5: Bot Personality
+# ============================================================
+step "5/6" "Bot Personality"
+
 read -p "  Bot name [Django]: " BOT_NAME
 BOT_NAME=${BOT_NAME:-Django}
 echo ""
@@ -122,7 +199,10 @@ echo ""
 # ============================================================
 # Write config.yaml
 # ============================================================
-echo -e "${BOLD}Writing config.yaml...${NC}"
+step "6/6" "Installing"
+echo ""
+
+echo -e "  ${BOLD}Writing config.yaml...${NC}"
 
 cat > config.yaml << YAML
 # DjangoCLI Configuration — Generated by setup.sh on $(date +%Y-%m-%d)
@@ -195,76 +275,87 @@ advanced:
   proactive_check_interval_minutes: 15
 YAML
 
-echo -e "  ${GREEN}✓${NC} config.yaml written"
-echo ""
+ok "config.yaml written"
+
+# Ensure config.yaml is gitignored (contains secrets)
+if ! grep -q "config.yaml" .gitignore 2>/dev/null; then
+    echo "config.yaml" >> .gitignore
+    ok "Added config.yaml to .gitignore (contains your API keys)"
+fi
 
 # ============================================================
 # Set up Obsidian Vault
 # ============================================================
 EXPANDED_VAULT=$(eval echo "$VAULT_PATH")
 if [ ! -d "$EXPANDED_VAULT" ]; then
-    echo -e "${BOLD}Setting up Obsidian vault at ${VAULT_PATH}...${NC}"
+    echo -e "  ${BOLD}Setting up Obsidian vault...${NC}"
+    # Make sure parent directory exists
+    mkdir -p "$(dirname "$EXPANDED_VAULT")"
     cp -r vault-template/ "$EXPANDED_VAULT"
-    # Replace placeholder in CLAUDE.md with owner name
-    sed -i '' "s/<!-- Fill in your personal context file and update this pointer -->/${OWNER_NAME}'s personal AI vault/" "$EXPANDED_VAULT/CLAUDE.md" 2>/dev/null
-    echo -e "  ${GREEN}✓${NC} Vault created with starter template"
-    echo "  Open in Obsidian: File > Open Vault > ${EXPANDED_VAULT}"
+    sed -i '' "s/<!-- Fill in your personal context file and update this pointer -->/${OWNER_NAME}'s personal AI vault/" "$EXPANDED_VAULT/CLAUDE.md" 2>/dev/null || true
+    ok "Vault created at ${EXPANDED_VAULT}"
+    echo -e "  ${DIM}Open in Obsidian: File > Open Vault > ${EXPANDED_VAULT}${NC}"
 else
-    echo -e "${BOLD}Vault already exists at ${VAULT_PATH} — skipping template copy.${NC}"
-    echo "  If you want the starter template, copy manually: cp -r vault-template/* ${VAULT_PATH}/"
+    ok "Vault already exists at ${EXPANDED_VAULT}"
 fi
-echo ""
 
 # ============================================================
 # Compile pim-tool
 # ============================================================
-echo -e "${BOLD}Compiling pim-tool (Swift binary for Calendar/Contacts/Reminders)...${NC}"
+echo -e "  ${BOLD}Compiling pim-tool...${NC}"
 
-cd server
-if [ -f pim-tool.swift ]; then
-    swiftc pim-tool.swift -o pim-tool -O 2>/dev/null
-    if [ -f pim-tool ]; then
-        echo -e "  ${GREEN}✓${NC} pim-tool compiled successfully"
+if [ -f server/pim-tool.swift ]; then
+    if swiftc server/pim-tool.swift -o server/pim-tool -O 2>/tmp/pim-tool-compile.err; then
+        ok "pim-tool compiled"
     else
-        echo -e "  ${RED}✗${NC} pim-tool compilation failed. You may need to run: swiftc pim-tool.swift -o pim-tool"
+        echo -e "  ${RED}✗ pim-tool compilation failed:${NC}"
+        cat /tmp/pim-tool-compile.err
+        echo -e "  ${DIM}Try manually: swiftc server/pim-tool.swift -o server/pim-tool${NC}"
     fi
 else
-    echo -e "  ${RED}✗${NC} pim-tool.swift not found in server/"
+    fail "server/pim-tool.swift not found — is the repo complete?"
 fi
-cd ..
-echo ""
 
 # ============================================================
 # Set up Python environments
 # ============================================================
-echo -e "${BOLD}Setting up Python environments...${NC}"
+echo -e "  ${BOLD}Installing server dependencies...${NC}"
 
-echo "  Setting up server..."
 cd server
 python3 -m venv venv
-source venv/bin/activate
-pip install -q -r requirements.txt 2>/dev/null
-deactivate
-echo -e "  ${GREEN}✓${NC} Server dependencies installed"
-cd ..
+if source venv/bin/activate && pip install -q -r requirements.txt 2>/tmp/pip-server.err; then
+    deactivate
+    ok "Server dependencies installed"
+else
+    deactivate 2>/dev/null || true
+    echo -e "  ${RED}✗ Server pip install failed:${NC}"
+    tail -5 /tmp/pip-server.err
+fi
+cd "$SCRIPT_DIR"
 
-echo "  Setting up bot..."
+echo -e "  ${BOLD}Installing bot dependencies...${NC}"
+
 cd bot
 python3 -m venv venv
-source venv/bin/activate
-pip install -q -r requirements.txt 2>/dev/null
-deactivate
-echo -e "  ${GREEN}✓${NC} Bot dependencies installed"
-cd ..
-echo ""
+if source venv/bin/activate && pip install -q -r requirements.txt 2>/tmp/pip-bot.err; then
+    deactivate
+    ok "Bot dependencies installed"
+else
+    deactivate 2>/dev/null || true
+    echo -e "  ${RED}✗ Bot pip install failed:${NC}"
+    tail -5 /tmp/pip-bot.err
+fi
+cd "$SCRIPT_DIR"
 
 # ============================================================
 # Create launchd plist for server
 # ============================================================
-echo -e "${BOLD}Creating launchd service for auto-start...${NC}"
+echo -e "  ${BOLD}Creating launchd service...${NC}"
 
-DJANGOCLI_DIR="$(pwd)"
 PLIST_PATH="$HOME/Library/LaunchAgents/com.djangocli.server.plist"
+
+# Make sure LaunchAgents directory exists
+mkdir -p "$HOME/Library/LaunchAgents"
 
 cat > "$PLIST_PATH" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -275,15 +366,15 @@ cat > "$PLIST_PATH" << PLIST
     <string>com.djangocli.server</string>
     <key>ProgramArguments</key>
     <array>
-        <string>${DJANGOCLI_DIR}/server/venv/bin/python3</string>
-        <string>${DJANGOCLI_DIR}/server/server.py</string>
+        <string>${SCRIPT_DIR}/server/venv/bin/python3</string>
+        <string>${SCRIPT_DIR}/server/server.py</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>${DJANGOCLI_DIR}/server</string>
+    <string>${SCRIPT_DIR}/server</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>DJANGOCLI_CONFIG</key>
-        <string>${DJANGOCLI_DIR}/config.yaml</string>
+        <string>${SCRIPT_DIR}/config.yaml</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
@@ -297,72 +388,46 @@ cat > "$PLIST_PATH" << PLIST
 </plist>
 PLIST
 
-echo -e "  ${GREEN}✓${NC} Created ${PLIST_PATH}"
-echo ""
+ok "Launchd service created"
 
 # ============================================================
 # Create DjangoCLI config directory
 # ============================================================
 mkdir -p ~/.djangocli
-echo -e "  ${GREEN}✓${NC} Created ~/.djangocli/"
-echo ""
+ok "Created ~/.djangocli/"
 
 # ============================================================
-# Grant TCC Permissions
+# Done
 # ============================================================
-echo -e "${BOLD}${YELLOW}IMPORTANT: TCC Permissions Required${NC}"
 echo ""
-echo "  macOS requires explicit permission for Calendar, Contacts, and Reminders access."
-echo "  Run these commands in Terminal to trigger the permission dialogs:"
+echo -e "${BOLD}╔══════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}║           Setup Complete!                ║${NC}"
+echo -e "${BOLD}╚══════════════════════════════════════════╝${NC}"
+echo ""
+echo -e "${BOLD}${YELLOW}Before starting — grant macOS permissions:${NC}"
+echo ""
+echo -e "  Run each command and click ${BOLD}Allow${NC} on the popup:"
 echo ""
 echo -e "    ${GREEN}./server/pim-tool calendar today${NC}"
 echo -e "    ${GREEN}./server/pim-tool reminders list${NC}"
 echo -e "    ${GREEN}./server/pim-tool contacts search \"test\"${NC}"
 echo ""
-echo "  Click 'Allow' on each popup that appears."
+echo -e "${BOLD}Then start the server:${NC}"
 echo ""
-
-# ============================================================
-# Summary
-# ============================================================
-echo -e "${BOLD}╔══════════════════════════════════════════╗${NC}"
-echo -e "${BOLD}║           Setup Complete!                ║${NC}"
-echo -e "${BOLD}╚══════════════════════════════════════════╝${NC}"
+echo -e "  ${GREEN}launchctl load ~/Library/LaunchAgents/com.djangocli.server.plist${NC}"
 echo ""
-echo -e "${BOLD}What's next:${NC}"
+echo -e "${BOLD}Test it:${NC}"
 echo ""
-echo "  1. Grant TCC permissions (commands above)"
+echo -e "  ${GREEN}curl -H 'x-api-key: ${SERVER_API_KEY}' http://${SERVER_HOST}:${SERVER_PORT}/health${NC}"
 echo ""
-echo "  2. Start the Mac Mini server:"
-echo -e "     ${GREEN}launchctl load ~/Library/LaunchAgents/com.djangocli.server.plist${NC}"
-echo "     Or manually:"
-echo -e "     ${GREEN}cd server && source venv/bin/activate && python3 server.py${NC}"
+echo -e "${BOLD}Deploy the bot:${NC}"
 echo ""
-echo "  3. Test the server:"
-echo -e "     ${GREEN}curl -H 'x-api-key: ${SERVER_API_KEY}' http://localhost:${SERVER_PORT}/health${NC}"
+echo "  See docs/QUICKSTART.md Part 3 for Render deployment instructions."
 echo ""
-echo "  4. Deploy the bot to Render (or run locally):"
+echo "  Key values you'll need on Render:"
+echo -e "    MAC_MINI_URL  = ${GREEN}http://${SERVER_HOST}:${SERVER_PORT}${NC}"
+echo -e "    MAC_MINI_API_KEY = ${GREEN}${SERVER_API_KEY}${NC}"
 echo ""
-echo "     ${BOLD}Render:${NC}"
-echo "     - Create a new Web Service from the bot/ directory"
-echo "     - Set environment variables:"
-echo -e "       ${GREEN}DJANGOCLI_CONFIG${NC} = (not needed if config.yaml is in repo root)"
-echo -e "       ${GREEN}MAC_MINI_URL${NC} = http://YOUR_TAILSCALE_IP:${SERVER_PORT}"
-echo -e "       ${GREEN}MAC_MINI_API_KEY${NC} = ${SERVER_API_KEY}"
-echo "       ...plus all API keys from config.yaml as env vars"
-echo "     - Set webhook URL in SendBlue: https://YOUR-APP.onrender.com/webhook"
-echo ""
-echo "     ${BOLD}Local:${NC}"
-echo -e "     ${GREEN}cd bot && source venv/bin/activate && python3 app.py${NC}"
-echo ""
-echo "  5. Set up Tailscale for remote access:"
-echo "     - Install Tailscale on this Mac and your deployment server"
-echo "     - Update server bind address to your Tailscale IP"
-echo "     - Update MAC_MINI_URL in bot config to Tailscale address"
-echo ""
-echo -e "  ${BOLD}Config file:${NC} $(pwd)/config.yaml"
-echo -e "  ${BOLD}Server logs:${NC} /tmp/djangocli-server.log"
-echo -e "  ${BOLD}Bot name:${NC} ${BOT_NAME}"
-echo ""
-echo -e "  ${GREEN}Text your bot's SendBlue number to test it!${NC}"
+echo -e "  ${DIM}Config: ${SCRIPT_DIR}/config.yaml${NC}"
+echo -e "  ${DIM}Logs:   /tmp/djangocli-server.log${NC}"
 echo ""

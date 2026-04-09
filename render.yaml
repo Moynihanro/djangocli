@@ -1,0 +1,40 @@
+# Render Blueprint — DjangoCLI Bot
+# Deploy: render.com > New > Blueprint > connect this repo
+# Docs: https://docs.render.com/blueprint-spec
+
+services:
+  - type: web
+    name: djangocli-bot
+    runtime: python
+    region: ohio
+    plan: starter
+    rootDir: bot
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SENDBLUE_API_KEY
+        sync: false
+      - key: SENDBLUE_SECRET_KEY
+        sync: false
+      - key: SENDBLUE_FROM
+        sync: false
+      - key: MY_PHONE_NUMBER
+        sync: false
+      - key: MAC_MINI_URL
+        sync: false
+      - key: MAC_MINI_API_KEY
+        sync: false
+      - key: OWNER_NAME
+        sync: false
+      - key: BOT_NAME
+        defaultValue: Django
+      - key: TIMEZONE
+        defaultValue: America/New_York
+      - key: BRAVE_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.11.9
