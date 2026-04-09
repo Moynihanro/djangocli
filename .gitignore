@@ -1,0 +1,10 @@
+config.yaml
+*.db
+venv/
+__pycache__/
+*.pyc
+.env
+*.log
+*.err
+server/pim-tool
+.DS_Store

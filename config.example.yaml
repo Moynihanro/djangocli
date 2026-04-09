@@ -1,0 +1,130 @@
+# DjangoCLI Configuration
+# Copy this to config.yaml and fill in your values
+# Run: cp config.example.yaml config.yaml
+
+# ============================================================
+# Required: Your Identity
+# ============================================================
+owner:
+  name: "Your Name"
+  phone_number: "+15551234567"          # Your iMessage phone number
+  timezone: "America/New_York"
+
+# ============================================================
+# Required: API Keys
+# ============================================================
+api_keys:
+  anthropic: ""                          # Claude API key from console.anthropic.com
+  sendblue_key: ""                       # SendBlue API key from sendblue.co
+  sendblue_secret: ""                    # SendBlue secret key
+  sendblue_from: "+15551234567"          # Your SendBlue phone number
+  brave_search: ""                       # Brave Search API key (optional, for web search)
+
+# ============================================================
+# Required: Mac Mini Server
+# ============================================================
+server:
+  api_key: ""                            # Generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+  host: "0.0.0.0"                        # Bind address (use Tailscale IP for security)
+  port: 8000
+  vault_path: "~/Desktop/BRAIN"          # Path to your Obsidian vault
+
+# ============================================================
+# Optional: Gmail Integration
+# ============================================================
+gmail:
+  email: ""                              # Your Gmail address
+  app_password: ""                       # Gmail App Password (not your regular password)
+                                         # Generate at: myaccount.google.com/apppasswords
+
+# ============================================================
+# Optional: Whoop Integration
+# ============================================================
+whoop:
+  credentials_path: "~/.djangocli/whoop_credentials.json"
+  # To set up: run the server, visit http://YOUR_SERVER:8000/whoop/auth
+  client_id: ""
+  client_secret: ""
+
+# ============================================================
+# Optional: Weather
+# ============================================================
+weather:
+  latitude: 40.7128                      # Your default location
+  longitude: -74.0060
+  city: "New York"
+
+# ============================================================
+# Bot Personality
+# ============================================================
+personality:
+  name: "Django"                         # Your bot's name
+  system_prompt: |
+    You are {bot_name}, {owner_name}'s personal AI assistant on iMessage.
+
+    Your personality:
+    - Direct, no fluff
+    - Casual tone, like a sharp friend texting
+    - Proactive — if you notice something relevant, mention it
+    - Keep responses SHORT — this is iMessage, not email. A few sentences max.
+    - NEVER use markdown formatting. This is plain text over iMessage.
+
+    You have tools to search the web, read/search/write to the vault, check the calendar,
+    look up contacts, manage reminders, read iMessages, log expenses and habits, and manage lists.
+
+    Use tools freely. Don't say "I can't" — just do it.
+
+  # How non-owner messages are handled in group chats
+  group_mode: "friendly"                 # "friendly", "snarky", or "ignore"
+
+  # How non-owner 1:1 messages are handled
+  stranger_mode: "friendly"              # "friendly" or "ignore"
+
+# ============================================================
+# Scheduled Messages
+# ============================================================
+schedule:
+  morning_briefing:
+    enabled: true
+    hour: 9
+    minute: 0
+
+  evening_wrap:
+    enabled: true
+    hour: 22
+    minute: 0
+
+  # Custom scheduled messages (optional)
+  custom: []
+    # - name: "Supplement Reminder"
+    #   hour: 13
+    #   minute: 30
+    #   message: "Time for your afternoon supplements!"
+
+# ============================================================
+# Tools (enable/disable individual tools)
+# ============================================================
+tools:
+  web_search: true
+  vault: true
+  calendar: true
+  contacts: true
+  reminders: true
+  messages: true
+  email: true                            # Requires gmail config
+  whoop: false                           # Requires whoop config
+  weather: true
+  expenses: true
+  habits: true
+  lists: true
+
+# ============================================================
+# Advanced
+# ============================================================
+advanced:
+  claude_model: "claude-sonnet-4-6"
+  max_tokens: 1024
+  conversation_history_limit: 20
+  fact_extraction: true                  # Auto-learn facts from conversations
+  proactive_checks: true                 # Check for important emails/reminders every 15min
+  proactive_check_interval_minutes: 15
