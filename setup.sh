@@ -174,8 +174,13 @@ echo ""
 
 read -p "  Enable Whoop integration? [y/N]: " WHOOP_ENABLE
 WHOOP_ENABLED=false
+WHOOP_CLIENT_ID=""
+WHOOP_CLIENT_SECRET=""
 if [[ "$WHOOP_ENABLE" =~ ^[Yy]$ ]]; then
     WHOOP_ENABLED=true
+    echo -e "  ${DIM}Get Whoop developer credentials from: https://developer.whoop.com${NC}"
+    read -p "  Whoop Client ID: " WHOOP_CLIENT_ID
+    read -p "  Whoop Client Secret: " WHOOP_CLIENT_SECRET
 fi
 
 echo ""
@@ -231,6 +236,8 @@ gmail:
 
 whoop:
   credentials_path: "~/.djangocli/whoop_credentials.json"
+  client_id: "${WHOOP_CLIENT_ID}"
+  client_secret: "${WHOOP_CLIENT_SECRET}"
 
 weather:
   latitude: ${WEATHER_LAT}
@@ -414,7 +421,7 @@ echo -e "    ${GREEN}./server/pim-tool contacts search \"test\"${NC}"
 echo ""
 echo -e "${BOLD}Then start the server:${NC}"
 echo ""
-echo -e "  ${GREEN}launchctl load ~/Library/LaunchAgents/com.djangocli.server.plist${NC}"
+echo -e "  ${GREEN}launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.djangocli.server.plist${NC}"
 echo ""
 echo -e "${BOLD}Test it:${NC}"
 echo ""

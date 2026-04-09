@@ -1,6 +1,5 @@
 fastapi
 uvicorn
-httpx
 psutil
 python-dotenv
 requests

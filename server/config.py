@@ -53,7 +53,12 @@ TIMEZONE = _get("owner", "timezone", "TIMEZONE", "America/New_York")
 WHOOP_CREDENTIALS_PATH = os.path.expanduser(
     _get("whoop", "credentials_path", "WHOOP_CREDENTIALS_PATH", "~/.djangocli/whoop_credentials.json")
 )
-WHOOP_REDIRECT_URI = os.environ.get("WHOOP_REDIRECT_URI", "http://localhost:9876/callback")
+WHOOP_CLIENT_ID = _get("whoop", "client_id", "WHOOP_CLIENT_ID", "")
+WHOOP_CLIENT_SECRET = _get("whoop", "client_secret", "WHOOP_CLIENT_SECRET", "")
+WHOOP_REDIRECT_URI = os.environ.get(
+    "WHOOP_REDIRECT_URI",
+    f"http://{_get('server', 'host', 'HOST', '127.0.0.1')}:{int(_get('server', 'port', 'PORT', '8000'))}/whoop/callback"
+)
 
 # Gmail
 GMAIL_EMAIL = _get("gmail", "email", "GMAIL_EMAIL", "")

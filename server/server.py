@@ -75,8 +75,6 @@ def health():
         "status": "ok",
         "version": "1.0",
         "product": "djangocli",
-        "vault_path": VAULT_PATH,
-        "vault_exists": os.path.isdir(VAULT_PATH),
         "timestamp": datetime.now().isoformat()
     }
 
@@ -350,20 +348,21 @@ def reminders_complete(req: ReminderCompleteRequest, x_api_key: str = Header(Non
 def messages_recent(contact: str = Query(None), limit: int = Query(10), x_api_key: str = Header(None)):
     verify_key(x_api_key)
     try:
+        conn = sqlite3.connect(MESSAGES_DB)
         if contact:
-            query = f"""
+            query = """
             SELECT m.text, m.is_from_me, datetime(m.date/1000000000 + 978307200, 'unixepoch', 'localtime') as dt
             FROM message m JOIN handle h ON m.handle_id = h.ROWID
-            WHERE h.id LIKE '%{contact}%' AND m.text IS NOT NULL
-            ORDER BY m.date DESC LIMIT {limit}"""
+            WHERE h.id LIKE ? AND m.text IS NOT NULL
+            ORDER BY m.date DESC LIMIT ?"""
+            rows = conn.execute(query, (f"%{contact}%", limit)).fetchall()
         else:
-            query = f"""
+            query = """
             SELECT m.text, m.is_from_me, datetime(m.date/1000000000 + 978307200, 'unixepoch', 'localtime') as dt, h.id
             FROM message m JOIN handle h ON m.handle_id = h.ROWID
             WHERE m.text IS NOT NULL
-            ORDER BY m.date DESC LIMIT {limit}"""
-        conn = sqlite3.connect(MESSAGES_DB)
-        rows = conn.execute(query).fetchall()
+            ORDER BY m.date DESC LIMIT ?"""
+            rows = conn.execute(query, (limit,)).fetchall()
         conn.close()
         messages = []
         for row in rows:
@@ -443,8 +442,8 @@ def refresh_whoop_token(creds):
         r = requests.post("https://api.prod.whoop.com/oauth/oauth2/token", data={
             "grant_type": "refresh_token",
             "refresh_token": creds.get("refresh_token"),
-            "client_id": creds.get("client_id"),
-            "client_secret": creds.get("client_secret"),
+            "client_id": WHOOP_CLIENT_ID or creds.get("client_id"),
+            "client_secret": WHOOP_CLIENT_SECRET or creds.get("client_secret"),
         }, timeout=10)
         if r.status_code == 200:
             data = r.json()
@@ -469,7 +468,7 @@ def whoop_auth():
         with open(WHOOP_CREDENTIALS_PATH) as f:
             creds = json.load(f)
     params = {
-        "client_id": creds.get("client_id", ""),
+        "client_id": WHOOP_CLIENT_ID or creds.get("client_id", ""),
         "response_type": "code",
         "scope": "read:recovery read:cycles read:workout read:sleep read:profile read:body_measurement offline",
         "redirect_uri": WHOOP_REDIRECT_URI,
@@ -495,8 +494,8 @@ def whoop_callback(code: str = Query(None), error: str = Query(None)):
         "grant_type": "authorization_code",
         "code": code,
         "redirect_uri": WHOOP_REDIRECT_URI,
-        "client_id": creds.get("client_id"),
-        "client_secret": creds.get("client_secret"),
+        "client_id": WHOOP_CLIENT_ID or creds.get("client_id"),
+        "client_secret": WHOOP_CLIENT_SECRET or creds.get("client_secret"),
     }, timeout=15)
 
     if r.status_code == 200:

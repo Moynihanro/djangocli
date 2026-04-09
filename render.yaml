@@ -36,5 +36,9 @@ services:
         defaultValue: America/New_York
       - key: BRAVE_API_KEY
         sync: false
+      - key: GMAIL_EMAIL
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
       - key: PYTHON_VERSION
         value: 3.11.9

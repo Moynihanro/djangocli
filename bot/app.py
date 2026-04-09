@@ -114,7 +114,7 @@ TOOLS_ENABLED = {
     "contacts": _tools_config.get("contacts", True),
     "reminders": _tools_config.get("reminders", True),
     "messages": _tools_config.get("messages", True),
-    "email": _tools_config.get("email", True),
+    "email": _tools_config.get("email", bool(cfg("gmail", "email", "GMAIL_EMAIL"))),
     "whoop": _tools_config.get("whoop", False),
     "weather": _tools_config.get("weather", True),
     "expenses": _tools_config.get("expenses", True),
@@ -277,19 +277,20 @@ def build_tools():
             },
         ])
 
-    tools.append({
-        "name": "set_reminder",
-        "description": f"Set a timed reminder. {OWNER_NAME} gets a text at the specified time.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "what": {"type": "string", "description": "What to remind about"},
-                "when": {"type": "string", "description": "ISO datetime string"},
-                "heads_up_minutes": {"type": "integer", "description": "Minutes before to remind", "default": 0}
-            },
-            "required": ["what", "when"]
-        }
-    })
+    if TOOLS_ENABLED["reminders"]:
+        tools.append({
+            "name": "set_reminder",
+            "description": f"Set a timed reminder. {OWNER_NAME} gets a text at the specified time.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "what": {"type": "string", "description": "What to remind about"},
+                    "when": {"type": "string", "description": "ISO datetime string"},
+                    "heads_up_minutes": {"type": "integer", "description": "Minutes before to remind", "default": 0}
+                },
+                "required": ["what", "when"]
+            }
+        })
 
     if TOOLS_ENABLED["messages"]:
         tools.extend([
@@ -726,7 +727,8 @@ def execute_vault_read(path):
 
 def execute_vault_save(title, content, folder="Inbox"):
     now = datetime.now(tz)
-    filename = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', ' ')
+    filename = re.sub(r'[^\w\s-]', '', title).strip()
+    filename = re.sub(r'\s+', ' ', filename)
     path = f"{folder}/{filename}.md"
     body = f"---\ntitle: {title}\ndate: {now.strftime('%Y-%m-%d')}\ntags:\n  - from/{BOT_NAME.lower()}\n---\n\n{content}\n"
     result = mini_api_post("/vault/write", {"path": path, "content": body})

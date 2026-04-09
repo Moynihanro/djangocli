@@ -48,7 +48,7 @@ A personal AI assistant that lives in iMessage, runs on your Mac, and knows your
 ### Setup (~30 minutes)
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/djangocli.git
+git clone https://github.com/Moynihanro/djangocli.git
 cd djangocli
 ./setup.sh
 ```
@@ -71,7 +71,7 @@ The setup wizard will:
 
 2. **Start the server**:
    ```bash
-   launchctl load ~/Library/LaunchAgents/com.djangocli.server.plist
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.djangocli.server.plist
    ```
 
 3. **Test the server**:

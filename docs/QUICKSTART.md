@@ -84,7 +84,7 @@ python3 --version
 ### 2B. Clone and run setup
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/djangocli.git
+git clone https://github.com/Moynihanro/djangocli.git
 cd djangocli
 chmod +x setup.sh
 ./setup.sh
@@ -129,7 +129,7 @@ If you're logged in via SSH (headless Mac Mini), you may need to do this at the 
 
 ```bash
 # Start the server (it'll auto-start on reboot too)
-launchctl load ~/Library/LaunchAgents/com.djangocli.server.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.djangocli.server.plist
 
 # Test it — replace YOUR_API_KEY with the key from setup
 curl -H "x-api-key: YOUR_API_KEY" http://localhost:8000/health
@@ -314,8 +314,8 @@ cd bot && source venv/bin/activate && pip install -r requirements.txt && deactiv
 # If server dependencies changed:
 cd server && source venv/bin/activate && pip install -r requirements.txt && deactivate && cd ..
 # Restart the server:
-launchctl unload ~/Library/LaunchAgents/com.djangocli.server.plist
-launchctl load ~/Library/LaunchAgents/com.djangocli.server.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.djangocli.server.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.djangocli.server.plist
 ```
 
 The bot on Render auto-deploys from `main` if you connected it to GitHub.

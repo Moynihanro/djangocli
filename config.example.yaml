@@ -25,7 +25,7 @@ api_keys:
 # ============================================================
 server:
   api_key: ""                            # Generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-  host: "0.0.0.0"                        # Bind address (use Tailscale IP for security)
+  host: "127.0.0.1"                       # Bind address (use your Tailscale IP for remote access)
   port: 8000
   vault_path: "~/Desktop/BRAIN"          # Path to your Obsidian vault
 
