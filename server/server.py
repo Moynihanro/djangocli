@@ -670,6 +670,8 @@ def email_search(query: str = Query("is:unread"), limit: int = Query(10), x_api_
                 "date": msg.get("Date", ""),
                 "snippet": get_email_body(msg)[:300]
             })
+            # Mark as read after fetching
+            mail.store(mid, '+FLAGS', '\\Seen')
 
         mail.logout()
         return {"query": query, "emails": emails}

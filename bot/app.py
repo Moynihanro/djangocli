@@ -89,6 +89,7 @@ Your personality:
 - Proactive — if you notice something relevant, mention it
 - Keep responses SHORT — this is iMessage, not email. A few sentences max.
 - NEVER use markdown formatting. This is plain text over iMessage.
+- When playing trivia or quiz games, NEVER include the answer in the same message as the question. Wait for {owner_name} to answer first, then reveal the answer.
 
 You have tools to search the web, read/search/write to the vault, check the calendar,
 look up contacts, manage reminders, read iMessages, log expenses and habits, and manage lists.
@@ -374,7 +375,7 @@ def build_tools():
             },
             {
                 "name": "show_expenses",
-                "description": "Show expense summary.",
+                "description": f"Show expense summary. Use days=30 for 'this month', days=7 for 'this week'. When {OWNER_NAME} asks 'how much did I spend this month' always use days=30.",
                 "input_schema": {
                     "type": "object",
                     "properties": {"days": {"type": "integer", "description": "Days to look back", "default": 30}}
@@ -407,7 +408,7 @@ def build_tools():
         tools.extend([
             {
                 "name": "note_add",
-                "description": "Add item(s) to a named list (grocery, todo, shopping, etc.).",
+                "description": f"Add item(s) to a named list (grocery, todo, shopping, etc.). Use when {OWNER_NAME} says 'add X to my Y list'. For multiple items like 'add apples and oranges', call this tool once per item.",
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -486,6 +487,8 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL,
             detail TEXT, tokens_in INTEGER DEFAULT 0, tokens_out INTEGER DEFAULT 0,
             duration_ms INTEGER DEFAULT 0, logged_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS proactive_alerts (
+            alert_key TEXT, sent_date TEXT)""")
         conn.commit()
     logger.info("Database initialized")
 
@@ -744,7 +747,12 @@ def execute_tool(tool_name, tool_input, sender):
             return execute_vault_save(tool_input["title"], tool_input["content"], tool_input.get("folder", "Inbox"))
         elif tool_name == "set_reminder":
             event_time = datetime.fromisoformat(tool_input["when"])
-            add_reminder(sender, tool_input["what"], event_time, tool_input.get("heads_up_minutes", 0))
+            heads_up = tool_input.get("heads_up_minutes", 0)
+            # Schedule iMessage delivery via SQLite
+            add_reminder(sender, tool_input["what"], event_time, heads_up)
+            # Also create in Apple Reminders so it shows up in get_reminders
+            due_str = event_time.strftime("%A, %B %-d, %Y at %-I:%M:%S %p")
+            mini_api_post("/reminders/create", {"name": tool_input["what"], "due": due_str})
             return f"Reminder set: '{tool_input['what']}' at {event_time.strftime('%A %-I:%M %p')}"
         elif tool_name == "log_expense":
             add_expense(sender, tool_input["amount"], tool_input.get("category", "general"), tool_input.get("description", ""))
@@ -1316,6 +1324,7 @@ Include:
 5. Heads up on anything early tomorrow
 
 Keep it SHORT — 3-5 sentences. Natural text message, not bullet points.
+- Use EXACT weather numbers from the WEATHER data above — do NOT make up or estimate temperatures or rain percentages. If no weather data is provided, skip weather entirely.
 
 {vault_context}"""
 
@@ -1371,6 +1380,7 @@ Include:
 3. Tomorrow's weather in one line
 
 Keep it concise. Casual tone.
+- Use EXACT weather numbers from the WEATHER data above — do NOT make up or estimate temperatures or rain percentages. If no weather data is provided, skip weather entirely.
 
 {vault_context}"""
 
@@ -1390,7 +1400,27 @@ Keep it concise. Casual tone.
 # ============================================================
 # Proactive Checks
 # ============================================================
-_proactive_alerts_sent = set()
+# Proactive alert dedup — persisted to SQLite so deploys don't re-trigger
+def _get_sent_alerts():
+    """Load today's sent alert keys from DB."""
+    today = datetime.now(tz).strftime("%Y-%m-%d")
+    with db_lock:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS proactive_alerts (alert_key TEXT, sent_date TEXT)")
+            conn.execute("DELETE FROM proactive_alerts WHERE sent_date < ?", (today,))
+            conn.commit()
+            rows = conn.execute("SELECT alert_key FROM proactive_alerts WHERE sent_date = ?", (today,)).fetchall()
+    return {r[0] for r in rows}
+
+
+def _mark_alert_sent(alert_key):
+    """Persist an alert key so it won't re-fire after deploy."""
+    today = datetime.now(tz).strftime("%Y-%m-%d")
+    with db_lock:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS proactive_alerts (alert_key TEXT, sent_date TEXT)")
+            conn.execute("INSERT INTO proactive_alerts (alert_key, sent_date) VALUES (?, ?)", (alert_key, today))
+            conn.commit()
 
 
 def check_proactive():
@@ -1399,8 +1429,76 @@ def check_proactive():
 
     now = datetime.now(tz)
     alerts = []
+    sent_alerts = _get_sent_alerts()
 
-    # Check overdue reminders
+    # 1. Important unread emails (pre-filter junk, then Claude Haiku evaluates)
+    if TOOLS_ENABLED.get("email"):
+        try:
+            since = (now - timedelta(days=1)).strftime("%d-%b-%Y")
+            email_data = mini_api_get("/email/search", {"query": f"is:unread after:{since}", "limit": 50})
+            if email_data and email_data.get("emails"):
+                junk_senders = ["noreply", "newsletter", "promo", "marketing", "unsubscribe",
+                                "donotreply", "no-reply", "deals@", "offers@", "sale@",
+                                "rewards@", "notifications@", "updates@", "store@", "shop@"]
+                filtered_emails = []
+                for e in email_data["emails"]:
+                    sender_lower = e.get("from", "").lower()
+                    if any(kw in sender_lower for kw in junk_senders):
+                        continue
+                    filtered_emails.append(e)
+
+                email_summaries = []
+                for e in filtered_emails:
+                    sender = e.get("from", "")
+                    subject = e.get("subject", "")
+                    snippet = e.get("snippet", "")[:200]
+                    alert_key = f"email:{subject[:50]}"
+                    if alert_key in sent_alerts:
+                        continue
+                    email_summaries.append({
+                        "from": sender, "subject": subject,
+                        "snippet": snippet, "alert_key": alert_key
+                    })
+
+                if email_summaries:
+                    eval_prompt = f"""Look at these unread emails and decide which ones {OWNER_NAME} NEEDS to know about right now.
+
+Important = personal emails from real people, business replies, legal/financial matters, appointment confirmations, anything requiring action.
+
+NOT important = marketing, newsletters, promotions, sales, brand emails, subscription notifications, social media notifications, automated alerts from apps.
+
+Return ONLY a JSON array of the index numbers (0-based) of the important ones. If none are important, return [].
+
+Emails:
+"""
+                    for i, es in enumerate(email_summaries):
+                        eval_prompt += f"\n{i}. From: {es['from']}\n   Subject: {es['subject']}\n   Preview: {es['snippet']}\n"
+
+                    try:
+                        eval_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+                        eval_resp = eval_client.messages.create(
+                            model="claude-haiku-4-5-20251001",
+                            max_tokens=100,
+                            messages=[{"role": "user", "content": eval_prompt}]
+                        )
+                        resp_text = eval_resp.content[0].text.strip()
+                        match = re.search(r'\[[\d,\s]*\]', resp_text)
+                        if match:
+                            important_indices = json.loads(match.group())
+                            for idx in important_indices:
+                                if 0 <= idx < len(email_summaries):
+                                    es = email_summaries[idx]
+                                    alert_msg = f"Email from {es['from']}: {es['subject']}"
+                                    if es['snippet']:
+                                        alert_msg += f"\n\n{es['snippet']}"
+                                    alerts.append(alert_msg)
+                                    _mark_alert_sent(es['alert_key'])
+                    except Exception as eval_err:
+                        logger.debug(f"Email eval error: {eval_err}")
+        except Exception as e:
+            logger.debug(f"Proactive email check error: {e}")
+
+    # 2. Overdue reminders
     try:
         reminders_data = mini_api_get("/reminders")
         if reminders_data and reminders_data.get("reminders"):
@@ -1410,23 +1508,67 @@ def check_proactive():
                 if not due:
                     continue
                 alert_key = f"reminder:{name}"
-                if alert_key in _proactive_alerts_sent:
+                if alert_key in sent_alerts:
                     continue
-                due_clean = due.replace("\u202f", " ")
-                for fmt in ["%A, %B %d, %Y at %I:%M:%S %p", "%B %d, %Y at %I:%M:%S %p"]:
-                    try:
-                        due_dt = datetime.strptime(due_clean, fmt)
-                        due_dt = tz.localize(due_dt)
-                        if due_dt < now:
-                            alerts.append(f"Overdue reminder: {name}")
-                            _proactive_alerts_sent.add(alert_key)
-                        break
-                    except ValueError:
-                        continue
-    except Exception:
-        pass
+                try:
+                    due_clean = due.replace("\u202f", " ")
+                    for fmt in ["%A, %B %d, %Y at %I:%M:%S %p", "%B %d, %Y at %I:%M:%S %p"]:
+                        try:
+                            due_dt = datetime.strptime(due_clean, fmt)
+                            due_dt = tz.localize(due_dt)
+                            if due_dt < now:
+                                alerts.append(f"Overdue reminder: {name} (was due {due_clean})")
+                                _mark_alert_sent(alert_key)
+                            break
+                        except ValueError:
+                            continue
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug(f"Proactive reminder check error: {e}")
 
-    for alert in alerts[:3]:
+    # 3. Calendar conflicts for tomorrow (check once in the evening)
+    if now.hour >= 19 and now.hour < 22:
+        alert_key = f"conflicts:{now.strftime('%Y-%m-%d')}"
+        if alert_key not in sent_alerts:
+            try:
+                cal_data = mini_api_get("/calendar/range", {"days": 2})
+                if cal_data and cal_data.get("events"):
+                    tomorrow_str = (now + timedelta(days=1)).strftime("%B %-d")
+                    tomorrow_events = [e for e in cal_data["events"] if tomorrow_str in e.get("start", "")]
+                    times = []
+                    for e in tomorrow_events:
+                        start = e.get("start", "")
+                        if "12:00:00 AM" in start:
+                            continue
+                        times.append((start, e.get("summary", "?")))
+                    seen_times = {}
+                    for start, summary in times:
+                        time_part = start.split(" at ")[-1] if " at " in start else start
+                        if time_part in seen_times:
+                            alerts.append(f"Tomorrow conflict: '{seen_times[time_part]}' and '{summary}' both at {time_part}")
+                            _mark_alert_sent(alert_key)
+                        else:
+                            seen_times[time_part] = summary
+            except Exception as e:
+                logger.debug(f"Proactive calendar check error: {e}")
+
+    # 4. Low Whoop recovery (check once in the morning)
+    if TOOLS_ENABLED.get("whoop") and 9 <= now.hour <= 11:
+        alert_key = f"whoop:{now.strftime('%Y-%m-%d')}"
+        if alert_key not in sent_alerts:
+            try:
+                whoop_data = mini_api_get("/whoop/recovery", {"limit": 1})
+                if whoop_data and whoop_data.get("records"):
+                    score = whoop_data["records"][0].get("score", {})
+                    recovery = score.get("recovery_score", 100)
+                    if recovery and recovery < 50:
+                        alerts.append(f"Whoop recovery is {recovery}% — might want to take it easy today.")
+                        _mark_alert_sent(alert_key)
+            except Exception as e:
+                logger.debug(f"Proactive whoop check error: {e}")
+
+    for alert in alerts[:5]:
         send_reply(MY_PHONE_NUMBER, alert)
 
 
@@ -1437,11 +1579,13 @@ def check_reminders():
     due = get_due_reminders()
     for r_id, phone, what, event_time_str, remind_at_str in due:
         try:
+            # Mark sent FIRST to prevent spam loop if send_reply succeeds
+            # but something after it fails — the reminder would re-fire every minute
             mark_reminder_sent(r_id)
             event_time = datetime.fromisoformat(event_time_str)
             time_str = event_time.strftime("%-I:%M %p")
             send_reply(phone, f"Reminder: {what} at {time_str}")
-            logger.info(f"Sent reminder: {what}")
+            logger.info(f"Sent reminder: {what} to {phone}")
         except Exception as e:
             logger.error(f"Reminder {r_id} failed: {e}")
 
