@@ -199,6 +199,23 @@ echo -e "  ${GREEN}✓${NC} config.yaml written"
 echo ""
 
 # ============================================================
+# Set up Obsidian Vault
+# ============================================================
+EXPANDED_VAULT=$(eval echo "$VAULT_PATH")
+if [ ! -d "$EXPANDED_VAULT" ]; then
+    echo -e "${BOLD}Setting up Obsidian vault at ${VAULT_PATH}...${NC}"
+    cp -r vault-template/ "$EXPANDED_VAULT"
+    # Replace placeholder in CLAUDE.md with owner name
+    sed -i '' "s/<!-- Fill in your personal context file and update this pointer -->/${OWNER_NAME}'s personal AI vault/" "$EXPANDED_VAULT/CLAUDE.md" 2>/dev/null
+    echo -e "  ${GREEN}✓${NC} Vault created with starter template"
+    echo "  Open in Obsidian: File > Open Vault > ${EXPANDED_VAULT}"
+else
+    echo -e "${BOLD}Vault already exists at ${VAULT_PATH} — skipping template copy.${NC}"
+    echo "  If you want the starter template, copy manually: cp -r vault-template/* ${VAULT_PATH}/"
+fi
+echo ""
+
+# ============================================================
 # Compile pim-tool
 # ============================================================
 echo -e "${BOLD}Compiling pim-tool (Swift binary for Calendar/Contacts/Reminders)...${NC}"

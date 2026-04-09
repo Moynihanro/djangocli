@@ -155,6 +155,19 @@ Add tool definitions to `build_tools()` in `bot/app.py` and handlers to `execute
 | Tailscale | Free |
 | **Total** | **~$33-53/mo** |
 
+## Vault Template
+
+DjangoCLI ships with a starter Obsidian vault (`vault-template/`) that gives new users a working wiki structure on day one. If the vault path you specify during setup doesn't exist, the template is automatically copied there.
+
+The template includes:
+- `CLAUDE.md` — Schema file that teaches the AI how the vault works
+- `Context/personal-context.md` — Fill-in-the-blank personal profile
+- `Context/workflow-context.md` — Projects, routines, confidence ratings
+- `index.md` / `log.md` — Navigation and changelog files
+- Empty folders for Projects, People, Ideas, Tools, Health, Daily Notes, Raw sources, and Inbox
+
+Open the vault in Obsidian and start filling in `personal-context.md` — the more context you give, the better your assistant gets.
+
 ## File Structure
 
 ```
@@ -172,6 +185,19 @@ djangocli/
 │   ├── pim-tool.swift       # Swift CLI for macOS PIM access
 │   ├── compile-pim-tool.sh  # Compiles Swift binary
 │   └── requirements.txt
+├── vault-template/          # Starter Obsidian vault
+│   ├── CLAUDE.md            # Vault schema for the AI
+│   ├── Context/             # Personal context + workflow
+│   ├── Projects/            # One file per project
+│   ├── People/              # Contacts and collaborators
+│   ├── Ideas/               # Parked ideas
+│   ├── Tools/               # Architecture specs
+│   ├── Health/              # Health data
+│   ├── Daily Notes/         # Session logs
+│   ├── Raw/                 # Immutable source docs
+│   ├── Inbox/               # Landing zone for new notes
+│   ├── index.md             # Content catalog
+│   └── log.md               # Change log
 └── README.md
 ```
 
