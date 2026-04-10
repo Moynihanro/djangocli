@@ -69,6 +69,10 @@ WEATHER_LAT = float(_get("weather", "latitude", "WEATHER_LAT", "0.0"))
 WEATHER_LON = float(_get("weather", "longitude", "WEATHER_LON", "0.0"))
 WEATHER_CITY = _get("weather", "city", "WEATHER_CITY", "")
 
+# Render Bot (for relay messaging)
+RENDER_BOT_URL = _get("server", "render_bot_url", "RENDER_BOT_URL", "")
+RENDER_BOT_KEY = _get("server", "render_bot_key", "RENDER_BOT_KEY", API_KEY)
+
 # Messages DB (macOS iMessage)
 MESSAGES_DB = os.path.expanduser("~/Library/Messages/chat.db")
 

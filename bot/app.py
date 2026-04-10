@@ -446,6 +446,20 @@ def build_tools():
         "input_schema": {"type": "object", "properties": {}}
     })
 
+    # Deep research tool (always available)
+    tools.append({
+        "name": "deep_research",
+        "description": f"Launch a deep research job on the Mac Mini using Claude Code. Use when {OWNER_NAME} asks to research something thoroughly, do a deep dive, investigate a topic, or says 'research this'. Runs in background — results texted back when done. For quick lookups, use web_search instead.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "The research topic or question to investigate"},
+                "depth": {"type": "string", "description": "Research depth: 'quick' (2-3 min, concise) or 'deep' (4-6 min, comprehensive with fact-checking)", "enum": ["quick", "deep"], "default": "deep"}
+            },
+            "required": ["query"]
+        }
+    })
+
     return tools
 
 
@@ -1015,6 +1029,14 @@ def execute_tool(tool_name, tool_input, sender):
             except Exception:
                 pass
             return "\n\n".join(sections)
+        elif tool_name == "deep_research":
+            query = tool_input["query"]
+            depth = tool_input.get("depth", "deep")
+            result = mini_api_post("/research", {"query": query, "depth": depth})
+            if result and result.get("status") == "started":
+                return f"Research launched ({depth} mode): '{query}'. I'll text you the results when it's done — usually {('2-3' if depth == 'quick' else '4-6')} minutes."
+            return "Couldn't start research. Mac Mini may be offline."
+
         else:
             return f"Unknown tool: {tool_name}"
     except Exception as e:

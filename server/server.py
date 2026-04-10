@@ -22,6 +22,8 @@ from fastapi import FastAPI, HTTPException, Header, Query, Request
 from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel
 from typing import Optional
+import threading
+import re as _re_mod
 import uvicorn
 
 app = FastAPI(title="DjangoCLI Server", version="1.0")
@@ -832,6 +834,195 @@ def api_logs(limit: int = Query(50), x_api_key: str = Header(None)):
     logs = list(request_log)[-limit:]
     logs.reverse()
     return {"logs": logs, "total": len(request_log)}
+
+
+# ============================================================
+# Deep Research (Claude Code CLI)
+# ============================================================
+class ResearchRequest(BaseModel):
+    query: str
+    depth: str = "deep"  # "quick" or "deep"
+
+
+_research_jobs = {}
+
+
+def send_imessage_via_relay(message: str):
+    """Send an iMessage through the bot's SendBlue integration."""
+    if not RENDER_BOT_URL:
+        print(f"[research] No RENDER_BOT_URL configured — cannot relay message")
+        return
+    try:
+        r = requests.post(
+            f"{RENDER_BOT_URL}/relay/send",
+            headers={"x-api-key": RENDER_BOT_KEY, "Content-Type": "application/json"},
+            json={"message": message},
+            timeout=30,
+        )
+        return f"relay_{r.status_code}"
+    except Exception as e:
+        return f"relay_error: {e}"
+
+
+def _clean_for_phone(text: str) -> str:
+    """Strip markdown formatting and links for clean iMessage reading."""
+    text = _re_mod.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    text = _re_mod.sub(r'https?://\S+', '', text)
+    text = _re_mod.sub(r'\*\*([^*]+)\*\*', r'\1', text)
+    text = _re_mod.sub(r'\*([^*]+)\*', r'\1', text)
+    text = _re_mod.sub(r'^#{1,4}\s+', '', text, flags=_re_mod.MULTILINE)
+    text = _re_mod.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
+def _run_research(job_id: str, query: str, depth: str):
+    """Run Claude Code CLI in a background thread and text results back."""
+    try:
+        _research_jobs[job_id]["status"] = "running"
+
+        if depth == "quick":
+            research_prompt = f"""Research the following topic. Search the web for current information. Cross-check key claims against official/primary sources before including them.
+
+Topic: {query}
+
+Write a thorough but concise brief (under 500 words). Include source URLs at the end."""
+            timeout = 180
+        else:
+            research_prompt = f"""You are a deep research agent. Conduct thorough research on the following topic.
+
+Topic: {query}
+
+Instructions:
+1. Search the web extensively — use multiple searches to cross-reference
+2. Look for PRIMARY and OFFICIAL sources (government sites, official orgs) first
+3. Cross-check every factual claim against at least 2 sources
+4. If sources conflict, note the conflict — don't just pick one
+5. Identify key players, trends, numbers, and actionable insights
+
+Write a comprehensive research brief (800-1500 words). Include all source URLs at the end."""
+            timeout = 360
+
+        env = {**os.environ, "CLAUDE_CODE_DISABLE_NONESSENTIAL": "1"}
+        env["PATH"] = f"/opt/homebrew/bin:{env.get('PATH', '/usr/bin:/bin')}"
+        env["HOME"] = os.path.expanduser("~")
+
+        # Step 1: Research
+        _research_jobs[job_id]["status"] = "researching"
+        result = subprocess.run(
+            ["/opt/homebrew/bin/claude", "--print", "-p", research_prompt,
+             "--allowedTools", "WebSearch,WebFetch,Read,Grep,Glob"],
+            capture_output=True, text=True, timeout=timeout,
+            env=env
+        )
+
+        raw_output = result.stdout.strip()
+        if not raw_output:
+            raw_output = f"Research completed but no output. stderr: {result.stderr[:500]}"
+            _research_jobs[job_id]["status"] = "error"
+            _research_jobs[job_id]["error"] = raw_output
+            send_imessage_via_relay(f"Research failed: {query}\n{raw_output[:500]}")
+            return
+
+        # Step 2: Self-verification
+        _research_jobs[job_id]["status"] = "verifying"
+        verify_prompt = f"""You are a fact-checker. Review this research output and verify every specific claim.
+
+RESEARCH OUTPUT:
+{raw_output[:6000]}
+
+Instructions:
+1. Identify every specific factual claim (numbers, dates, rules, requirements, names)
+2. For each claim, search the web to verify it against official/primary sources
+3. Flag anything that is wrong, outdated, misleading, or unsupported
+4. Pay special attention to: legal/regulatory claims, statistics, prices, and any claim that inverts a meaning (e.g. saying "below X" when it should be "above X")
+
+Output format — be brief:
+CORRECTIONS (list each error and the correct info, or "None found" if all checks out)
+CONFIDENCE: HIGH / MEDIUM / LOW (how confident you are in the research overall)"""
+
+        verify_result = subprocess.run(
+            ["/opt/homebrew/bin/claude", "--print", "-p", verify_prompt,
+             "--allowedTools", "WebSearch,WebFetch"],
+            capture_output=True, text=True, timeout=180,
+            env=env
+        )
+
+        verification = verify_result.stdout.strip() if verify_result.stdout else "Verification step failed"
+
+        # Step 3: Generate phone-friendly summary
+        _research_jobs[job_id]["status"] = "formatting"
+        phone_prompt = f"""Rewrite this research into a short, phone-friendly text message. Rules:
+- Max 500 words
+- No links, no URLs, no markdown, no bold, no headers, no tables
+- Plain text only with line breaks between sections
+- Use short paragraphs (2-3 sentences max)
+- Lead with the bottom line / most important finding
+- Use dashes (-) for lists, not bullets
+- If the verification found errors, incorporate the corrections into the summary — don't repeat wrong info
+- End with "Full report saved to vault" (nothing else)
+- Do NOT include any preamble like "Here's the summary" or "Here's the text message" — just go straight into the content
+
+RESEARCH:
+{raw_output[:5000]}
+
+VERIFICATION:
+{verification[:2000]}"""
+
+        phone_result = subprocess.run(
+            ["/opt/homebrew/bin/claude", "--print", "-p", phone_prompt],
+            capture_output=True, text=True, timeout=60,
+            env=env
+        )
+
+        phone_text = phone_result.stdout.strip() if phone_result.stdout else _clean_for_phone(raw_output[:2000])
+
+        _research_jobs[job_id]["status"] = "done"
+        _research_jobs[job_id]["result"] = raw_output
+        _research_jobs[job_id]["verification"] = verification
+
+        # Save full report + verification to vault
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        safe_title = query[:60].replace("/", "-").replace(":", "-")
+        vault_path = f"Raw/research/{date_str}-{safe_title}.md"
+        full_path = Path(VAULT_PATH) / vault_path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(
+            f"---\ntype: research\ncreated: {date_str}\nquery: \"{query}\"\ndepth: {depth}\n---\n\n# {query}\n\n{raw_output}\n\n---\n\n## Verification\n\n{verification}\n"
+        )
+
+        # Text the clean phone version
+        phone_msg = f"Research: {query}\n\n{phone_text[:2800]}\n\nFull report saved to vault: {vault_path}"
+        send_imessage_via_relay(phone_msg)
+
+    except subprocess.TimeoutExpired:
+        _research_jobs[job_id]["status"] = "timeout"
+        send_imessage_via_relay(f"Research timed out: {query}\nTry a more specific query or use depth='quick'.")
+    except Exception as e:
+        _research_jobs[job_id]["status"] = "error"
+        _research_jobs[job_id]["error"] = str(e)
+        send_imessage_via_relay(f"Research failed: {query}\nError: {str(e)[:200]}")
+
+
+@app.post("/research")
+def start_research(req: ResearchRequest, x_api_key: str = Header(None)):
+    """Kick off a deep research job using Claude Code CLI."""
+    verify_key(x_api_key)
+    job_id = f"research_{int(time.time())}"
+    _research_jobs[job_id] = {"query": req.query, "depth": req.depth, "status": "queued"}
+
+    thread = threading.Thread(target=_run_research, args=(job_id, req.query, req.depth), daemon=True)
+    thread.start()
+
+    return {"status": "started", "job_id": job_id, "message": f"Research started ({req.depth} mode). I'll text you when it's done."}
+
+
+@app.get("/research/status")
+def research_status(job_id: str = Query(None), x_api_key: str = Header(None)):
+    """Check status of a research job."""
+    verify_key(x_api_key)
+    if job_id and job_id in _research_jobs:
+        return _research_jobs[job_id]
+    return {"jobs": {k: {"status": v["status"], "query": v["query"]} for k, v in _research_jobs.items()}}
 
 
 # ============================================================
